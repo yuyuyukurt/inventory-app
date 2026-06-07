@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>棚卸アプリ</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; background: #f0f0f0; }
+    .screen { display: none; padding: 20px; max-width: 480px; margin: 0 auto; }
+    .screen.active { display: block; }
+    h1 { font-size: 20px; margin-bottom: 20px; color: #333; text-align: center; }
+    h2 { font-size: 18px; margin-bottom: 15px; color: #333; }
+    .card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    button { width: 100%; padding: 14px; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; margin-bottom: 10px; }
+    .btn-primary { background: #2563eb; color: white; }
+    .btn-success { background: #16a34a; color: white; }
+    .btn-danger { background: #dc2626; color: white; }
+    .btn-gray { background: #6b7280; color: white; }
+    select, input { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; margin-bottom: 10px; }
+    .item-info { background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+    .item-info .name { font-size: 18px; font-weight: bold; color: #166534; }
+    .item-info .code { font-size: 14px; color: #666; }
+    .status-bar { background: #1e40af; color: white; padding: 8px 20px; text-align: center; font-size: 14px; position: sticky; top: 0; z-index: 100; }
+    .status-bar.offline { background: #dc2626; }
+    .record { background: white; border-radius: 8px; padding: 12px; margin-bottom: 8px; border-left: 4px solid #2563eb; }
+    .record .qty { font-size: 20px; font-weight: bold; color: #2563eb; }
+    #qr-reader { width: 100%; border-radius: 8px; overflow: hidden; }
+    .qty-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+    .qty-row input { margin: 0; }
+    .qty-row button { width: 50px; padding: 12px; margin: 0; font-size: 20px; }
+    label { font-size: 14px; color: #666; margin-bottom: 4px; display: block; }
+    .nav { display: flex; gap: 10px; margin-bottom: 15px; }
+    .nav button { margin: 0; padding: 10px; font-size: 14px; }
+    .badge { display: inline-block; border-radius: 20px; padding: 2px 10px; font-size: 12px; margin-left: 8px; background: #fee2e2; color: #dc2626; }
+    .badge.synced { background: #dcfce7; color: #16a34a; }
+    .manual-row { display: flex; gap: 8px; }
+    .manual-row input { margin: 0; }
+    .manual-row button { width: auto; padding: 12px 16px; margin: 0; white-space: nowrap; }
+  </style>
+</head>
+<body>
+
+<div class="status-bar" id="statusBar">接続確認中...</div>
+
+<!-- ログイン画面 -->
+<div class="screen active" id="screenLogin">
+  <div style="padding-top: 40px;">
+    <div class="card">
+      <h1>棚卸アプリ</h1>
+      <label>あなたの名前を選んでください</label>
+      <select id="workerSelect">
+        <option value="">-- 名前を選択 --</option>
+      </select>
+      <button class="btn-primary" onclick="login()">開始する</button>
+    </div>
+  </div>
+</div>
+
+<!-- エリア選択画面 -->
+<div class="screen" id="screenArea">
+  <div class="card">
+    <h2>エリアと棚卸回を選択</h2>
+    <label>棚卸回（例：2026年6月）</label>
+    <input type="text" id="sessionName" placeholder="例：2026年6月">
+    <label>エリア・倉庫</label>
+    <select id="areaSelect">
+      <option value="">-- エリアを選択 --</option>
+    </select>
+    <button class="btn-primary" onclick="startScan()">スキャン開始</button>
+    <button class="btn-gray" onclick="goTo('screenLogin')">戻る</button>
+  </div>
+</div>
+
+<!-- スキャン画面 -->
+<div class="screen" id="screenScan">
+  <div class="card">
+    <div class="nav">
+      <button class="btn-gray" onclick="goTo('screenArea')">← 戻る</button>
+      <button class="btn-primary" onclick="goTo('screenRecords')">記録一覧 →</button>
+    </div>
+    <div id="workerAreaInfo" style="font-size:13px; color:#666; margin-bottom:12px; background:#f8f8f8; padding:8px; border-radius:6px;"></div>
+
+    <div id="scannerSection" style="margin-bottom:12px;">
+      <button class="btn-primary" id="scanBtn" onclick="toggleScanner()">カメラでスキャン</button>
+      <div id="qr-reader" style="display:none; margin-top:8px;"></div>
+    </div>
+
+    <div id="itemInfo" style="display:none;" class="item-info">
+      <div class="code" id="scannedCode"></div>
+      <div class="name" id="scannedName"></div>
+      <div style="font-size:14px; color:#555;" id="scannedUnit"></div>
+    </div>
+
+    <label>品番を手入力</label>
+    <div class="manual-row" style="margin-bottom:12px;">
+      <input type="text" id="manualCode" placeholder="品番を入力">
+      <button class="btn-gray" onclick="lookupManual()">検索</button>
+    </div>
+
+    <label>数量</label>
+    <div class="qty-row">
+      <button class="btn-danger" onclick="changeQty(-1)">－</button>
+      <input type="number" id="qtyInput" value="1" min="1" style="text-align:center; font-size:24px; font-weight:bold;">
+      <button class="btn-success" onclick="changeQty(1)">＋</button>
+    </div>
+
+    <button class="btn-success" onclick="saveRecord()">登録する</button>
+  </div>
+</div>
+
+<!-- 記録一覧画面 -->
+<div class="screen" id="screenRecords">
+  <div class="card">
+    <div class="nav">
+      <button class="btn-gray" onclick="goTo('screenScan')">← 戻る</button>
+      <button class="btn-primary" onclick="syncNow()">同期する</button>
+    </div>
+    <h2>登録済み記録 <span id="recordCount" style="font-size:14px; color:#999;"></span></h2>
+    <div id="recordsList"></div>
+  </div>
+</div>
+
+<script>
+// ========== 設定（ここを書き換えてください） ==========
+const SUPABASE_URL = 'https://qjnjnyjwszbcgpaadmip.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqbmpueWp3c3piY2dwYWFkbWlwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA3NDc1NDEsImV4cCI6MjA5NjMyMzU0MX0.NZJvqwOUEZ-Rdp4deBjYRSg78Tgf3mwYd7VsgZFlFrY';
+// =====================================================
+
+const { createClient } = supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let currentWorker = null;
+let currentArea = null;
+let currentSession = '';
+let currentItem = null;
+let scanner = null;
+let scannerActive = false;
+
+window.addEventListener('online',  () => { updateStatus(true);  syncNow(); });
+window.addEventListener('offline', () => updateStatus(false));
+
+function updateStatus(online) {
+  const bar = document.getElementById('statusBar');
+  bar.textContent = online ? 'オンライン' : 'オフライン（スマホに保存中）';
+  bar.className = 'status-bar' + (online ? '' : ' offline');
+}
+
+function goTo(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  if (id === 'screenRecords') renderRecords();
+  if (id === 'screenScan' && scannerActive) stopScanner();
+}
+
+// ===== ログイン =====
+async function loadWorkers() {
+  try {
+    const { data } = await db.from('workers').select('*').order('worker_name');
+    const sel = document.getElementById('workerSelect');
+    if (data && data.length > 0) {
+      data.forEach(w => {
+        const opt = document.createElement('option');
+        opt.value = w.id;
+        opt.textContent = w.worker_name;
+        sel.appendChild(opt);
+      });
+    } else {
+      // データがない場合はデモ用に手入力できるようにする
+      sel.innerHTML = '';
+      sel.style.display = 'none';
+      const inp = document.createElement('input');
+      inp.id = 'workerNameInput';
+      inp.placeholder = '名前を入力してください';
+      sel.parentNode.insertBefore(inp, sel);
+    }
+  } catch(e) { console.log('workers load error', e); }
+}
+
+async function loadAreas() {
+  try {
+    const { data } = await db.from('areas').select('*').order('area_name');
+    const sel = document.getElementById('areaSelect');
+    if (data && data.length > 0) {
+      data.forEach(a => {
+        const opt = document.createElement('option');
+        opt.value = a.id;
+        opt.textContent = a.area_name;
+        sel.appendChild(opt);
+      });
+    } else {
+      sel.innerHTML = '';
+      sel.style.display = 'none';
+      const inp = document.createElement('input');
+      inp.id = 'areaNameInput';
+      inp.placeholder = 'エリア名を入力してください';
+      sel.parentNode.insertBefore(inp, sel);
+    }
+  } catch(e) { console.log('areas load error', e); }
+}
+
+function login() {
+  const sel = document.getElementById('workerSelect');
+  const inp = document.getElementById('workerNameInput');
+  if (inp) {
+    if (!inp.value.trim()) { alert('名前を入力してください'); return; }
+    currentWorker = { id: null, name: inp.value.trim() };
+  } else {
+    if (!sel.value) { alert('名前を選んでください'); return; }
+    currentWorker = { id: sel.value, name: sel.options[sel.selectedIndex].text };
+  }
+  goTo('screenArea');
+}
+
+function startScan() {
+  const areaSel = document.getElementById('areaSelect');
+  const areaInp = document.getElementById('areaNameInput');
+  const session = document.getElementById('sessionName').value.trim();
+  if (!session) { alert('棚卸回を入力してください'); return; }
+
+  if (areaInp) {
+    if (!areaInp.value.trim()) { alert('エリアを入力してください'); return; }
+    currentArea = { id: null, name: areaInp.value.trim() };
+  } else {
+    if (!areaSel.value) { alert('エリアを選んでください'); return; }
+    currentArea = { id: areaSel.value, name: areaSel.options[areaSel.selectedIndex].text };
+  }
+  currentSession = session;
+  document.getElementById('workerAreaInfo').textContent =
+    '担当: ' + currentWorker.name + '  エリア: ' + currentArea.name + '  ' + currentSession;
+  goTo('screenScan');
+}
+
+// ===== スキャナー =====
+function toggleScanner() {
+  scannerActive ? stopScanner() : startScanner();
+}
+
+function startScanner() {
+  const div = document.getElementById('qr-reader');
+  div.style.display = 'block';
+  scanner = new Html5Qrcode('qr-reader');
+  scanner.start(
+    { facingMode: 'environment' },
+    { fps: 10, qrbox: { width: 250, height: 150 } },
+    (code) => { stopScanner(); lookupItem(code); },
+    () => {}
+  ).catch(err => {
+    alert('カメラを起動できませんでした。\nブラウザのカメラ許可を確認してください。');
+    div.style.display = 'none';
+  });
+  scannerActive = true;
+  document.getElementById('scanBtn').textContent = 'スキャン停止';
+}
+
+function stopScanner() {
+  if (scanner && scannerActive) {
+    scanner.stop().catch(() => {});
+    document.getElementById('qr-reader').style.display = 'none';
+    scannerActive = false;
+    document.getElementById('scanBtn').textContent = 'カメラでスキャン';
+  }
+}
+
+function lookupManual() {
+  const code = document.getElementById('manualCode').value.trim();
+  if (!code) { alert('品番を入力してください'); return; }
+  lookupItem(code);
+}
+
+async function lookupItem(code) {
+  document.getElementById('manualCode').value = code;
+
+  // ローカルキャッシュから検索
+  const cached = localStorage.getItem('items_cache');
+  let items = cached ? JSON.parse(cached) : [];
+  let item = items.find(i => i.item_code === code);
+
+  // なければSupabaseから
+  if (!item && navigator.onLine) {
+    const { data } = await db.from('items').select('*').eq('item_code', code).maybeSingle();
+    item = data;
+  }
+
+  currentItem = item || { item_code: code, item_name: '（マスタ未登録）', unit: '' };
+
+  document.getElementById('scannedCode').textContent = currentItem.item_code;
+  document.getElementById('scannedName').textContent = currentItem.item_name;
+  document.getElementById('scannedUnit').textContent = currentItem.unit ? '単位: ' + currentItem.unit : '';
+  document.getElementById('itemInfo').style.display = 'block';
+  document.getElementById('qtyInput').focus();
+  document.getElementById('qtyInput').select();
+}
+
+function changeQty(d) {
+  const inp = document.getElementById('qtyInput');
+  inp.value = Math.max(1, (parseInt(inp.value) || 0) + d);
+}
+
+// ===== 保存・同期 =====
+async function saveRecord() {
+  if (!currentItem) { alert('品番をスキャンまたは入力してください'); return; }
+  const qty = parseFloat(document.getElementById('qtyInput').value);
+  if (!qty || qty <= 0) { alert('数量を入力してください'); return; }
+
+  const record = {
+    id: Date.now(),
+    item_code: currentItem.item_code,
+    item_name: currentItem.item_name,
+    unit: currentItem.unit || '',
+    quantity: qty,
+    area_id: currentArea.id ? parseInt(currentArea.id) : null,
+    area_name: currentArea.name,
+    worker_id: currentWorker.id ? parseInt(currentWorker.id) : null,
+    worker_name: currentWorker.name,
+    session_name: currentSession,
+    note: '',
+    created_at: new Date().toISOString(),
+    synced: false
+  };
+
+  const records = getLocalRecords();
+  records.push(record);
+  localStorage.setItem('inventory_records', JSON.stringify(records));
+
+  if (navigator.onLine) await syncRecord(record);
+
+  currentItem = null;
+  document.getElementById('itemInfo').style.display = 'none';
+  document.getElementById('manualCode').value = '';
+  document.getElementById('qtyInput').value = '1';
+
+  alert('登録しました！\n' + record.item_name + ' × ' + qty + record.unit);
+}
+
+function getLocalRecords() {
+  return JSON.parse(localStorage.getItem('inventory_records') || '[]');
+}
+
+async function syncRecord(record) {
+  try {
+    const { error } = await db.from('inventory_records').insert({
+      item_code: record.item_code,
+      item_name: record.item_name,
+      unit: record.unit,
+      quantity: record.quantity,
+      area_id: record.area_id,
+      worker_id: record.worker_id,
+      session_name: record.session_name,
+      note: record.note,
+      created_at: record.created_at
+    });
+    if (!error) {
+      const all = getLocalRecords();
+      const idx = all.findIndex(r => r.id === record.id);
+      if (idx >= 0) { all[idx].synced = true; localStorage.setItem('inventory_records', JSON.stringify(all)); }
+    }
+  } catch(e) {}
+}
+
+async function syncNow() {
+  if (!navigator.onLine) { alert('オフラインです。Wi-Fiに繋がってから試してください。'); return; }
+  const unsynced = getLocalRecords().filter(r => !r.synced);
+  for (const r of unsynced) await syncRecord(r);
+  if (document.getElementById('screenRecords').classList.contains('active')) renderRecords();
+  if (unsynced.length > 0) alert(unsynced.length + '件を同期しました');
+  else alert('未同期データはありません');
+}
+
+function renderRecords() {
+  const session = currentSession;
+  const areaName = currentArea ? currentArea.name : '';
+  const records = getLocalRecords()
+    .filter(r => r.session_name === session && r.area_name === areaName)
+    .reverse();
+
+  document.getElementById('recordCount').textContent = '(' + records.length + '件)';
+  const list = document.getElementById('recordsList');
+
+  if (records.length === 0) {
+    list.innerHTML = '<p style="color:#999; text-align:center; padding:20px;">まだ記録がありません</p>';
+    return;
+  }
+
+  list.innerHTML = records.map(r => `
+    <div class="record">
+      <div style="font-size:12px; color:#999;">${r.item_code}　${r.worker_name}　${new Date(r.created_at).toLocaleTimeString('ja-JP')}</div>
+      <div style="font-weight:bold; font-size:16px;">${r.item_name}</div>
+      <div class="qty">${r.quantity} ${r.unit}<span class="badge ${r.synced ? 'synced' : ''}">${r.synced ? '同期済' : '未同期'}</span></div>
+    </div>
+  `).join('');
+}
+
+async function cacheItems() {
+  try {
+    const { data } = await db.from('items').select('*');
+    if (data) localStorage.setItem('items_cache', JSON.stringify(data));
+  } catch(e) {}
+}
+
+// 起動
+updateStatus(navigator.onLine);
+loadWorkers();
+loadAreas();
+cacheItems();
+</script>
+</body>
+</html>
