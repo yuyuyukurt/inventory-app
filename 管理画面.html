@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>棚卸管理画面</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; background: #f0f0f0; }
+    h1 { font-size: 22px; color: #1e3a8a; margin-bottom: 20px; }
+    h2 { font-size: 16px; color: #333; margin-bottom: 12px; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 30px 20px; }
+    .card { background: white; border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    .filter-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 20px; }
+    .filter-item { display: flex; flex-direction: column; gap: 4px; }
+    label { font-size: 13px; color: #666; }
+    select, input[type="date"] { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+    button { padding: 10px 20px; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; }
+    .btn-primary { background: #2563eb; color: white; }
+    .btn-success { background: #16a34a; color: white; }
+    .btn-gray { background: #6b7280; color: white; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th { background: #1e3a8a; color: white; padding: 10px 12px; text-align: left; white-space: nowrap; }
+    td { padding: 9px 12px; border-bottom: 1px solid #e5e7eb; }
+    tr:hover td { background: #f8faff; }
+    .total-row td { background: #eff6ff; font-weight: bold; border-top: 2px solid #2563eb; }
+    .summary-table th { background: #166534; }
+    .summary-table .total-col { background: #dcfce7; font-weight: bold; }
+    .badge { display: inline-block; background: #dbeafe; color: #1e40af; border-radius: 4px; padding: 2px 8px; font-size: 12px; }
+    .stats { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+    .stat-card { background: white; border-radius: 8px; padding: 16px 24px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); min-width: 140px; }
+    .stat-card .num { font-size: 28px; font-weight: bold; color: #2563eb; }
+    .stat-card .lbl { font-size: 13px; color: #666; margin-top: 4px; }
+    .tab-row { display: flex; gap: 8px; margin-bottom: 16px; }
+    .tab { padding: 8px 20px; border-radius: 6px 6px 0 0; cursor: pointer; font-size: 14px; border: none; background: #e5e7eb; color: #555; }
+    .tab.active { background: #2563eb; color: white; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .loading { text-align: center; color: #999; padding: 40px; }
+    .overflow-x { overflow-x: auto; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>棚卸管理画面</h1>
+
+  <!-- フィルター -->
+  <div class="card">
+    <div class="filter-row">
+      <div class="filter-item">
+        <label>棚卸日</label>
+        <input type="date" id="filterDate">
+      </div>
+      <div class="filter-item">
+        <label>エリア</label>
+        <select id="filterArea">
+          <option value="">全エリア</option>
+        </select>
+      </div>
+      <div class="filter-item" style="justify-content: flex-end;">
+        <button class="btn-primary" onclick="loadData()">検索</button>
+      </div>
+      <div class="filter-item" style="justify-content: flex-end;">
+        <button class="btn-success" onclick="downloadExcel()">Excelダウンロード</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 統計 -->
+  <div class="stats">
+    <div class="stat-card">
+      <div class="num" id="statTotal">-</div>
+      <div class="lbl">総スキャン件数</div>
+    </div>
+    <div class="stat-card">
+      <div class="num" id="statItems">-</div>
+      <div class="lbl">品番数</div>
+    </div>
+    <div class="stat-card">
+      <div class="num" id="statWorkers">-</div>
+      <div class="lbl">担当者数</div>
+    </div>
+    <div class="stat-card">
+      <div class="num" id="statAreas">-</div>
+      <div class="lbl">エリア数</div>
+    </div>
+  </div>
+
+  <!-- タブ -->
+  <div class="tab-row">
+    <button class="tab active" onclick="switchTab('summary')">品番別集計</button>
+    <button class="tab" onclick="switchTab('detail')">明細一覧</button>
+  </div>
+
+  <!-- 品番別集計タブ -->
+  <div class="tab-content active" id="tab-summary">
+    <div class="card">
+      <h2>品番別・エリア別集計</h2>
+      <div class="overflow-x">
+        <table class="summary-table" id="summaryTable">
+          <thead id="summaryHead"></thead>
+          <tbody id="summaryBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 明細一覧タブ -->
+  <div class="tab-content" id="tab-detail">
+    <div class="card">
+      <h2>明細一覧</h2>
+      <div class="overflow-x">
+        <table id="detailTable">
+          <thead>
+            <tr>
+              <th>棚卸日</th>
+              <th>エリア</th>
+              <th>品番</th>
+              <th>品名</th>
+              <th>単位</th>
+              <th>数量</th>
+              <th>担当者</th>
+              <th>登録時刻</th>
+            </tr>
+          </thead>
+          <tbody id="detailBody">
+            <tr><td colspan="8" class="loading">検索ボタンを押してください</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://qjnjnyjwszbcgpaadmip.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFqbmpueWp3c3piY2dwYWFkbWlwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA3NDc1NDEsImV4cCI6MjA5NjMyMzU0MX0.NZJvqwOUEZ-Rdp4deBjYRSg78Tgf3mwYd7VsgZFlFrY';
+
+const { createClient } = supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let allData = [];
+let areas = [];
+
+async function init() {
+  const { data } = await db.from('areas').select('*').order('area_name');
+  areas = data || [];
+  const sel = document.getElementById('filterArea');
+  areas.forEach(a => {
+    const opt = document.createElement('option');
+    opt.value = a.area_name;
+    opt.textContent = a.area_name;
+    sel.appendChild(opt);
+  });
+  // 今日の日付をデフォルトに
+  document.getElementById('filterDate').value = new Date().toISOString().split('T')[0];
+  await loadData();
+}
+
+async function loadData() {
+  document.getElementById('detailBody').innerHTML = '<tr><td colspan="8" class="loading">読み込み中...</td></tr>';
+  document.getElementById('summaryBody').innerHTML = '';
+
+  const date = document.getElementById('filterDate').value;
+  const area = document.getElementById('filterArea').value;
+
+  let query = db.from('inventory_records').select('*').order('created_at', { ascending: false });
+
+  if (date) {
+    query = query.gte('created_at', date + 'T00:00:00').lte('created_at', date + 'T23:59:59');
+  }
+  if (area) {
+    // area_nameで絞り込み（area_idがnullの場合も考慮）
+    const areaObj = areas.find(a2 => a2.area_name === area);
+    if (areaObj) query = query.eq('area_id', areaObj.id);
+  }
+
+  const { data, error } = await query;
+  if (error) { alert('データ取得エラー: ' + error.message); return; }
+
+  allData = data || [];
+  renderStats();
+  renderDetail();
+  renderSummary();
+}
+
+function renderStats() {
+  document.getElementById('statTotal').textContent = allData.length;
+  document.getElementById('statItems').textContent = new Set(allData.map(r => r.item_code)).size;
+  document.getElementById('statWorkers').textContent = new Set(allData.map(r => r.worker_name)).size;
+  document.getElementById('statAreas').textContent = new Set(allData.map(r => r.area_id)).size;
+}
+
+function renderDetail() {
+  const tbody = document.getElementById('detailBody');
+  if (allData.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="loading">データがありません</td></tr>';
+    return;
+  }
+  tbody.innerHTML = allData.map(r => `
+    <tr>
+      <td>${r.session_name || ''}</td>
+      <td>${getAreaName(r.area_id)}</td>
+      <td>${r.item_code || ''}</td>
+      <td>${r.item_name || ''}</td>
+      <td>${r.unit || ''}</td>
+      <td style="text-align:right; font-weight:bold;">${r.quantity}</td>
+      <td>${r.worker_name || ''}</td>
+      <td>${new Date(r.created_at).toLocaleTimeString('ja-JP')}</td>
+    </tr>
+  `).join('');
+}
+
+function getAreaName(areaId) {
+  const a = areas.find(a => a.id === areaId);
+  return a ? a.area_name : (areaId || '');
+}
+
+function renderSummary() {
+  // エリア一覧を取得
+  const areaIds = [...new Set(allData.map(r => r.area_id))].filter(Boolean);
+  const areaNames = areaIds.map(id => getAreaName(id));
+
+  // 品番ごとに集計
+  const itemMap = {};
+  allData.forEach(r => {
+    const key = r.item_code;
+    if (!itemMap[key]) {
+      itemMap[key] = { item_code: r.item_code, item_name: r.item_name, unit: r.unit, areas: {}, total: 0 };
+    }
+    const areaName = getAreaName(r.area_id);
+    itemMap[key].areas[areaName] = (itemMap[key].areas[areaName] || 0) + parseFloat(r.quantity);
+    itemMap[key].total += parseFloat(r.quantity);
+  });
+
+  const items = Object.values(itemMap).sort((a, b) => a.item_code?.localeCompare(b.item_code));
+
+  // ヘッダー
+  const thead = document.getElementById('summaryHead');
+  thead.innerHTML = `<tr>
+    <th>品番</th>
+    <th>品名</th>
+    <th>単位</th>
+    ${areaNames.map(n => `<th>${n}</th>`).join('')}
+    <th style="background:#166534;">合計</th>
+  </tr>`;
+
+  // ボディ
+  const tbody = document.getElementById('summaryBody');
+  if (items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="10" class="loading">データがありません</td></tr>';
+    return;
+  }
+
+  // エリア合計行
+  const areaTotals = {};
+  let grandTotal = 0;
+  items.forEach(item => {
+    areaNames.forEach(n => {
+      areaTotals[n] = (areaTotals[n] || 0) + (item.areas[n] || 0);
+    });
+    grandTotal += item.total;
+  });
+
+  tbody.innerHTML = items.map(item => `
+    <tr>
+      <td>${item.item_code || ''}</td>
+      <td>${item.item_name || ''}</td>
+      <td>${item.unit || ''}</td>
+      ${areaNames.map(n => `<td style="text-align:right;">${item.areas[n] || ''}</td>`).join('')}
+      <td class="total-col" style="text-align:right;">${item.total}</td>
+    </tr>
+  `).join('') + `
+    <tr class="total-row">
+      <td colspan="3">合計</td>
+      ${areaNames.map(n => `<td style="text-align:right;">${areaTotals[n] || 0}</td>`).join('')}
+      <td style="text-align:right;">${grandTotal}</td>
+    </tr>
+  `;
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  event.target.classList.add('active');
+}
+
+function downloadExcel() {
+  if (allData.length === 0) { alert('データがありません'); return; }
+
+  const wb = XLSX.utils.book_new();
+
+  // ===== 明細シート =====
+  const detailRows = [['棚卸日', 'エリア', '品番', '品名', '単位', '数量', '担当者', '登録時刻']];
+  allData.forEach(r => {
+    detailRows.push([
+      r.session_name || '',
+      getAreaName(r.area_id),
+      r.item_code || '',
+      r.item_name || '',
+      r.unit || '',
+      r.quantity,
+      r.worker_name || '',
+      new Date(r.created_at).toLocaleString('ja-JP')
+    ]);
+  });
+  const wsDetail = XLSX.utils.aoa_to_sheet(detailRows);
+  XLSX.utils.book_append_sheet(wb, wsDetail, '明細');
+
+  // ===== 集計シート =====
+  const areaIds = [...new Set(allData.map(r => r.area_id))].filter(Boolean);
+  const areaNames = areaIds.map(id => getAreaName(id));
+
+  const itemMap = {};
+  allData.forEach(r => {
+    const key = r.item_code;
+    if (!itemMap[key]) itemMap[key] = { item_code: r.item_code, item_name: r.item_name, unit: r.unit, areas: {}, total: 0 };
+    const areaName = getAreaName(r.area_id);
+    itemMap[key].areas[areaName] = (itemMap[key].areas[areaName] || 0) + parseFloat(r.quantity);
+    itemMap[key].total += parseFloat(r.quantity);
+  });
+
+  const summaryRows = [['品番', '品名', '単位', ...areaNames, '合計']];
+  const areaTotals = {};
+  let grandTotal = 0;
+
+  Object.values(itemMap).sort((a, b) => a.item_code?.localeCompare(b.item_code)).forEach(item => {
+    summaryRows.push([
+      item.item_code, item.item_name, item.unit,
+      ...areaNames.map(n => { areaTotals[n] = (areaTotals[n] || 0) + (item.areas[n] || 0); return item.areas[n] || 0; }),
+      item.total
+    ]);
+    grandTotal += item.total;
+  });
+  summaryRows.push(['合計', '', '', ...areaNames.map(n => areaTotals[n] || 0), grandTotal]);
+
+  const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+  XLSX.utils.book_append_sheet(wb, wsSummary, '集計');
+
+  const date = document.getElementById('filterDate').value || '棚卸';
+  XLSX.writeFile(wb, `棚卸_${date}.xlsx`);
+}
+
+init();
+</script>
+</body>
+</html>
