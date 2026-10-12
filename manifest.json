@@ -1,0 +1,16 @@
+{
+  "name": "棚卸アプリ",
+  "short_name": "棚卸",
+  "description": "製造業向け棚卸スキャンアプリ",
+  "start_url": "/inventory-app/棚卸アプリ.html",
+  "display": "standalone",
+  "background_color": "#f0f0f0",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}
